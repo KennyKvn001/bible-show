@@ -53,9 +53,11 @@ For OBS with a green or transparent background, use the green-screen theme with 
 | 中文 | 和合本 (简体) (CUVS) | Public Domain |
 
 Texts come from the [eBible corpus](https://github.com/BibleNLP/ebible), [open-bibles](https://github.com/seven1m/open-bibles)
-and, for Louis Segond, the [UBS USFM edition](https://github.com/BibleCorps/FRA-B-LSG1910-PD-UBS). Most translations use English
-verse numbers. Louis Segond, Luther 1912 and the Synodal translation keep their own numbering (for example, some Psalm titles count
-as verse 1), so with two translations side by side a few chapters can be offset by a verse or two.
+and, for Louis Segond, the [UBS USFM edition](https://github.com/BibleCorps/FRA-B-LSG1910-PD-UBS). A few verses the eBible corpus
+drops (such as 2 Corinthians 13:14) are taken from the same translations in [wldeh/bible-api](https://github.com/wldeh/bible-api).
+Most translations use English verse numbers. Louis Segond, Reina Valera 1909, Luther 1912 and the Synodal translation keep their
+own numbering (for example, some Psalm titles count as verse 1, and in Spanish Jonah 1:17 is 2:1), so with two translations side
+by side a few chapters can be offset by a verse or two.
 Creative Commons texts are shown unchanged with credit to the rights holder. The Somali text is CC BY-NC-ND, so do not
 use this app with it for commercial purposes.
 

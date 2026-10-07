@@ -47,7 +47,7 @@ async function fetchBuiltIn(t: Translation): Promise<BibleData> {
     const names = (bookNames as Record<string, Record<string, string>>)[t.id];
     return names ? { ...data, names } : data;
   } catch {
-    throw new Error(`Could not read ${t.name}. Reload the page to try again.`);
+    throw new Error(`Could not read ${t.name}. Try again.`);
   }
 }
 

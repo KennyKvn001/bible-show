@@ -1,26 +1,46 @@
 import type { BibleData } from './bible.ts';
 import { BOOKS, BOOK_CODES, bookByCode, bookByOsis } from './books.ts';
 
+export interface ParseOptions {
+  /** Throw when a verse number repeats or goes backwards within a chapter, instead of joining the verses (build only). */
+  strict?: boolean;
+}
+
 /**
  * Parses USFM, Zefania XML, OSIS XML, USFX XML, or JSON Bible files into BibleData.
  * Uses a small tag tokenizer instead of DOMParser so it also runs in Node (scripts/build-data.mjs).
  */
-export function parseBible(text: string): BibleData {
+export function parseBible(text: string, { strict = false }: ParseOptions = {}): BibleData {
   const head = text.slice(0, 4000).replace(/^\uFEFF/, '').trimStart();
-  if (head.startsWith('{') || head.startsWith('[')) return parseJson(JSON.parse(text));
-  if (head.startsWith('\\') || /^\\(id|c|v) /m.test(head)) return parseUsfm(text);
-  if (/<XMLBIBLE|<BIBLEBOOK/i.test(head) || /<BIBLEBOOK/.test(text.slice(0, 200000))) return parseZefania(text);
-  if (/<osis[\s>]/.test(head) || /<osis[\s>]/.test(text.slice(0, 20000))) return parseOsis(text);
-  if (/<usfx[\s>]/.test(text.slice(0, 20000))) return parseUsfx(text);
+  if (head.startsWith('{') || head.startsWith('[')) return parseJson(JSON.parse(text), strict);
+  if (head.startsWith('\\') || /^\\(id|c|v) /m.test(head)) return parseUsfm(text, strict);
+  if (/<XMLBIBLE|<BIBLEBOOK/i.test(head) || /<BIBLEBOOK/.test(text.slice(0, 200000))) return parseZefania(text, strict);
+  if (/<osis[\s>]/.test(head) || /<osis[\s>]/.test(text.slice(0, 20000))) return parseOsis(text, strict);
+  if (/<usfx[\s>]/.test(text.slice(0, 20000))) return parseUsfx(text, strict);
   throw new Error('Unrecognised file. Supported formats: USFM, Zefania XML, OSIS XML, USFX XML and JSON.');
 }
 
-/** Combines Bibles split over several files (for example one USFM file per book). Later files win on overlap. */
+/**
+ * Combines Bibles split over several files (for example one USFM file per book, or a book split over two files).
+ * Merges verse by verse; later files win where both have text for the same verse.
+ */
 export function mergeBibles(parts: BibleData[]): BibleData {
   const out: BibleData = { books: {}, names: {} };
   for (const p of parts) {
-    Object.assign(out.books, p.books);
+    for (const [code, chapters] of Object.entries(p.books)) {
+      const book = (out.books[code] ??= []);
+      chapters.forEach((verses, c) => {
+        const into = (book[c] ??= []);
+        verses?.forEach((v, i) => {
+          if (v || !into[i]) into[i] = v ?? '';
+        });
+      });
+    }
     Object.assign(out.names!, p.names ?? {});
+  }
+  // Fill gaps (chapters or verses no file had) with empty strings, as the parsers do.
+  for (const chapters of Object.values(out.books)) {
+    for (let c = 0; c < chapters.length; c++) chapters[c] = Array.from(chapters[c] ?? [], (s) => s ?? '');
   }
   if (!Object.keys(out.names!).length) delete out.names;
   return out;
@@ -62,14 +82,35 @@ class Builder {
   names: Record<string, string> = {};
   private buf = '';
   private target: [string, number, number] | null = null;
+  private strict: boolean;
+  private last: [string, number, number] = ['', 0, 0];
+
+  constructor(strict = false) {
+    this.strict = strict;
+  }
 
   start(book: string, chapter: number, verse: number) {
     this.end();
     if (!book || !chapter || !verse) return;
+    if (this.strict) {
+      // A repeated verse number is usually a typo in the source ("\v 11 5..." for "\v 115 ..."), which would otherwise
+      // join two verses silently.
+      const ref = `${book} ${chapter}:${verse}`;
+      if (this.books[book]?.[chapter - 1]?.[verse - 1] !== undefined) throw new Error(`${ref} appears twice`);
+      const [lastBook, lastChapter, lastVerse] = this.last;
+      if (book === lastBook && chapter === lastChapter && verse < lastVerse) {
+        throw new Error(`${ref} comes after verse ${lastVerse}`);
+      }
+      this.last = [book, chapter, verse];
+    }
     this.target = [book, chapter, verse];
   }
   add(s: string) {
     if (this.target) this.buf += s;
+  }
+  /** Drops the space before a note, when punctuation follows the note. */
+  trimEnd() {
+    this.buf = this.buf.trimEnd();
   }
   end() {
     if (this.target) {
@@ -109,8 +150,8 @@ function walk(xml: string, skip: Set<string>, onTag: (t: Token) => void, onText:
   }
 }
 
-function parseZefania(xml: string): BibleData {
-  const b = new Builder();
+function parseZefania(xml: string, strict: boolean): BibleData {
+  const b = new Builder(strict);
   let book = '';
   let chapter = 0;
   walk(xml, new Set(['CAPTION', 'NOTE', 'REMARK', 'XREF', 'INFORMATION', 'PROLOG', 'MEDIA']), (t) => {
@@ -129,8 +170,8 @@ function parseZefania(xml: string): BibleData {
   return b.result();
 }
 
-function parseOsis(xml: string): BibleData {
-  const b = new Builder();
+function parseOsis(xml: string, strict: boolean): BibleData {
+  const b = new Builder(strict);
   const ref = (id: string) => {
     const [osis, c, v] = id.split(/\s/)[0].split('.');
     return { book: bookByOsis(osis)?.code ?? '', c: Number(c), v: Number(v) };
@@ -149,8 +190,8 @@ function parseOsis(xml: string): BibleData {
   return b.result();
 }
 
-function parseUsfx(xml: string): BibleData {
-  const b = new Builder();
+function parseUsfx(xml: string, strict: boolean): BibleData {
+  const b = new Builder(strict);
   let book = '';
   let chapter = 0;
   let captureName = false;
@@ -180,23 +221,44 @@ function parseUsfx(xml: string): BibleData {
 
 // USFM paragraph markers whose line holds headings, titles, references or introductions rather than verse text.
 const USFM_SKIP_LINE = /^(id|ide|h\d*|toca?\d*|mte?\d*|ms\d*|mr|sr?\d*|r|d|sp|rem|sts|restore|cl|cd|imte?\d*|is\d*|ipi?|imi?|ipq|imq|ipr|iq\d*|ib|ili\d*|iot|io\d*|iex|ie|lit|qa|periph|usfm)$/;
-// Notes and other spans whose whole content is left out, up to their closing marker.
-const USFM_SKIP_SPAN = /^(f|fe|ef|x|ex|fig|va|vp|ca|rq|cat)$/;
+// Notes, sidebars (\esb ... \esbe) and other spans whose whole content is left out, up to their closing marker.
+const USFM_SKIP_SPAN = /^(f|fe|ef|x|ex|fig|va|vp|ca|rq|cat|esb)$/;
 // Inline character styles: their text is kept and they do not start a new word.
-const USFM_CHAR = /^(add|addpn|bd|bdit|bk|dc|em|it|jmp|k|lik|liv\d*|nd|no|ord|pn|png|qac|qs|qt|rb|sc|sig|sls|sup|tl|w|wa|wg|wh|wj)$/;
+const USFM_CHAR = /^(add|addpn|bd|bdit|bk|dc|em|it|jmp|k|lik|liv\d*|nd|no|ord|pn|png|qac|qs|qt|rb|ref|sc|sig|sls|sup|tl|w|wa|wg|wh|wj|xt)$/;
+// Markers that belong inside a note (\fr, \ft, \xo, \xt...), besides character styles and custom \z markers.
+const USFM_NOTE_PART = /^([fx][a-z]+|z\w*)$/;
+// USFM 3 milestones, such as \qt-s |who="Jesus"\*, \qt-e\*, \ts\* and \zaln-s |x-strong="G39720"\*, hold no text.
+// Only a name and |attributes may come before the \*, so a stray \* cannot take a verse with it.
+const USFM_MILESTONE = /\\[a-z][a-z0-9]*(?:-[se])?[ \t]*(?:\|[^\\\n]*)?\\\*/g;
 
-function parseUsfm(usfm: string): BibleData {
-  const b = new Builder();
+/** Whether a marker ends a note or sidebar whose closing marker is missing. */
+function endsSpan(name: string, span: string): boolean {
+  if (name === 'v' || name === 'c' || name === 'id') return true;
+  return span !== 'esb' && !USFM_NOTE_PART.test(name) && !USFM_CHAR.test(name) && !USFM_SKIP_SPAN.test(name);
+}
+
+function parseUsfm(usfm: string, strict: boolean): BibleData {
+  const b = new Builder(strict);
   let book = '';
   let chapter = 0;
-  for (const line of usfm.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+  // A note can wrap onto the next line, so the skipped span is kept across lines.
+  let span = '';
+  let spanEnded = false;
+  // Open character styles, whose |attributes (\w gracious|strong="H2587"\w*) are left out.
+  let chars: string[] = [];
+  for (const line of usfm.replace(/^\uFEFF/, '').replace(USFM_MILESTONE, '').split(/\r?\n/)) {
     let skipLine = false;
-    let span = '';
-    let inWord = false;
+    let opened = false;
     let pending: 'id' | 'c' | 'v' | 'name' | '' = '';
-    for (const m of line.matchAll(/\\(\+?)([a-z]+\d*)(\*?)|([^\\]+)/g)) {
+    for (const m of line.matchAll(/\\(\+?)([a-z]+\d*(?:-\d+)?)?(\*?)|([^\\]+)/g)) {
+      const afterOpen = opened;
+      const afterSpan = spanEnded;
+      opened = spanEnded = false;
       if (m[4] !== undefined) {
-        let text = m[4];
+        // ~ is a no-break space and // an optional line break.
+        let text = m[4].replace(/~|\/\//g, ' ');
+        // The space after an opening marker only ends the marker: "un\add believ\add*ing" is "unbelieving".
+        if (afterOpen) text = text.replace(/^[ \t]/, '');
         if (pending === 'id') {
           b.end();
           book = bookByCode(text.trim().slice(0, 3))?.code ?? '';
@@ -214,35 +276,51 @@ function parseUsfm(usfm: string): BibleData {
         }
         pending = '';
         if (skipLine || span) continue;
-        if (inWord) text = text.split('|')[0];
+        if (chars.length) text = text.split('|')[0];
+        // "beginning \f ...\f* , God" reads "beginning, God". Only closing punctuation: French puts a space before ; : ! ?
+        if (afterSpan && /^\s*[,.)\]]/.test(text)) {
+          b.trimEnd();
+          text = text.trimStart();
+        }
         b.add(text);
         continue;
       }
       const [, , name, close] = m;
+      if (!name) continue; // a stray backslash
       if (span) {
-        if (close && name === span) span = '';
-        continue;
+        if (span === 'esb' ? name === 'esbe' : close && name === span) {
+          span = '';
+          spanEnded = true;
+          continue;
+        }
+        // A note missing its closing marker ends at the next verse or paragraph, so it cannot hide the rest of the book.
+        if (!endsSpan(name, span)) continue;
+        span = '';
       }
+      opened = !close;
       if (USFM_SKIP_SPAN.test(name)) {
         if (!close) span = name;
-      } else if (name === 'id') {
-        pending = 'id';
-      } else if (name === 'c') {
-        pending = 'c';
-        skipLine = false;
-      } else if (name === 'v') {
-        pending = 'v';
-        skipLine = false;
-      } else if (name === 'toc2' || (name === 'h' && book && !b.names[book])) {
-        pending = 'name';
-        skipLine = true;
-      } else if (USFM_SKIP_LINE.test(name)) {
-        b.add(' ');
-        skipLine = true;
-      } else if (name === 'w') {
-        inWord = !close;
-      } else if (!close && !USFM_CHAR.test(name)) {
-        b.add(' ');
+      } else if (USFM_CHAR.test(name)) {
+        if (!close) chars.push(name);
+        else if (chars.includes(name)) chars.length = chars.lastIndexOf(name); // also ends styles nested in it
+      } else if (!close) {
+        // Paragraphs, verses and chapters end any character style left open.
+        chars = [];
+        if (name === 'id') {
+          pending = 'id';
+        } else if (name === 'c') {
+          pending = 'c';
+          skipLine = false;
+        } else if (name === 'v') {
+          pending = 'v';
+          skipLine = false;
+        } else if (name === 'toc2' || (name === 'h' && book && !b.names[book])) {
+          pending = 'name';
+          skipLine = true;
+        } else {
+          b.add(' ');
+          if (USFM_SKIP_LINE.test(name)) skipLine = true;
+        }
       }
     }
     b.add(' ');
@@ -252,7 +330,7 @@ function parseUsfm(usfm: string): BibleData {
 
 type JsonBook = { abbrev?: string; name?: string; book?: string; chapters: (string[] | { verses: string[] })[] };
 
-function parseJson(data: unknown): BibleData {
+function parseJson(data: unknown, strict: boolean): BibleData {
   // Native format: { books: { GEN: [[...]] }, names?: {...} }
   if (data && typeof data === 'object' && 'books' in data && !Array.isArray((data as { books: unknown }).books)) {
     return data as BibleData;
@@ -273,7 +351,7 @@ function parseJson(data: unknown): BibleData {
     | { book?: number | string; book_id?: number | string; book_name?: string; chapter: number; verse: number; text: string }[]
     | undefined;
   if (Array.isArray(verses) && verses.length && 'text' in verses[0]) {
-    const b = new Builder();
+    const b = new Builder(strict);
     for (const v of verses) {
       const raw = v.book ?? v.book_id ?? v.book_name ?? '';
       const code =

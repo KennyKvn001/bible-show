@@ -5,6 +5,58 @@ import { mergeBibles, parseBible } from '../lib/importers.ts';
 import { forgetBible } from '../lib/library.ts';
 import { Dialog } from './Dialog.tsx';
 
+// File extensions left out of a file name used as the Bible's name ("eng-kjv.osis.xml" gives "eng kjv").
+const EXTENSIONS = /(\.(xml|json|osis|usfx|zefania|usfm|sfm|txt))+$/i;
+
+/** "1 verse", "31,102 verses" */
+const count = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * Reads a file as text: UTF-8, or UTF-16 with a byte order mark. Older USFM files are often Windows-1252, which their
+ * \ide line may say ("\ide CP-1252"); other files that are not valid UTF-8 are read as Windows-1252 too.
+ */
+async function readText(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes);
+  const latin = new TextDecoder('windows-1252');
+  const ide = /\\ide\s+([^\r\n]*)/.exec(latin.decode(bytes.subarray(0, 4000)))?.[1] ?? '';
+  if (!/1252|latin.?1|8859.?1\b/i.test(ide)) {
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      // not UTF-8: fall back to Windows-1252
+    }
+  }
+  return latin.decode(bytes);
+}
+
+/** The description after the book code on a USFM \id line: "Bibiliya Yera" in "\id GEN - Bibiliya Yera". */
+const usfmTitle = (text: string) => /\\id\s+\S+[ \t]*(?:-[ \t]*)?([^\r\n]*)/.exec(text.slice(0, 4000))?.[1].trim() ?? '';
+
+/** Why a file was skipped, short enough for a list: "no verses", "unrecognised file". */
+function skipReason(message: string): string {
+  if (message.startsWith('No verses')) return 'no verses';
+  if (message.startsWith('Unrecognised file')) return 'unrecognised file';
+  return message.replace(/\.$/, '').replace(/^\p{Lu}(?!\p{Lu})/u, (c) => c.toLowerCase());
+}
+
+/**
+ * A short name from the full name, at most 6 characters: the initials of several words, keeping abbreviations and
+ * numbers whole ("King James Version" gives "KJV", "Test LSG" gives "TLSG"), or else the first word.
+ */
+function abbreviate(name: string): string {
+  const words = name.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (words.length < 2) return (words[0] ?? '').slice(0, 6).toUpperCase();
+  let out = '';
+  for (const w of words) {
+    const part = /^[\p{Lu}\p{N}]+$/u.test(w) ? w : Array.from(w)[0];
+    if (out.length + part.length > 6) break;
+    out += part;
+  }
+  return out.toUpperCase();
+}
+
 interface Props {
   imported: Translation[];
   onClose: () => void;
@@ -15,6 +67,7 @@ interface Props {
 export function ImportDialog({ imported, onClose, onChanged }: Props) {
   const [parsed, setParsed] = useState<{ data: BibleData; verses: number; books: number } | null>(null);
   const [error, setError] = useState('');
+  const [skipped, setSkipped] = useState('');
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState('');
   const [abbr, setAbbr] = useState('');
@@ -24,25 +77,43 @@ export function ImportDialog({ imported, onClose, onChanged }: Props) {
   const onFiles = async (list: FileList | null) => {
     setParsed(null);
     setError('');
+    setSkipped('');
     const files = Array.from(list ?? []);
     if (!files.length) return;
     setBusy(true);
     try {
-      // Several files are combined, e.g. a USFM Bible with one file per book. Files without verses are skipped.
+      // Several files are combined, e.g. a USFM Bible with one file per book. Files that cannot be read (such as front
+      // matter without verses) are skipped and listed.
       const parts = [];
+      const titles = new Set<string>();
+      const skips = new Map<string, string[]>(); // reason -> file names
       let firstError = '';
       for (const file of files) {
         try {
-          parts.push(parseBible(await file.text()));
+          const text = await readText(file);
+          parts.push(parseBible(text));
+          titles.add(usfmTitle(text));
         } catch (e) {
-          firstError ||= `${file.name}: ${(e as Error).message}`;
+          const message = (e as Error).message;
+          firstError ||= `${file.name}: ${message}`;
+          const reason = skipReason(message);
+          skips.set(reason, [...(skips.get(reason) ?? []), file.name]);
         }
       }
-      if (!parts.length) throw new Error(firstError || 'No verses found.');
+      if (files.length > 1 && skips.size) {
+        const reasons = Array.from(skips, ([reason, names]) => `${names.join(', ')} (${reason})`).join('; ');
+        setSkipped(`Skipped ${count([...skips.values()].flat().length, 'file')}: ${reasons}`);
+      }
+      if (!parts.length) throw new Error(files.length > 1 ? 'No verses found in these files.' : firstError || 'No verses found.');
       const data = mergeBibles(parts);
       const verses = Object.values(data.books).flat(2).filter(Boolean).length;
       setParsed({ data, verses, books: Object.keys(data.books).length });
-      if (!name) setName(files.length === 1 ? files[0].name.replace(/\.(xml|json|osis|usfx|zefania|usfm|sfm|txt)+$/i, '').replace(/[-_]/g, ' ') : '');
+      if (!name) {
+        // One file: its name. Several: the \id description they share, if it is short enough to be a name.
+        const [title] = titles;
+        if (files.length === 1) setName(files[0].name.replace(EXTENSIONS, '').replace(/[-_]/g, ' '));
+        else if (titles.size === 1 && title && title.length <= 50) setName(title);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -57,7 +128,7 @@ export function ImportDialog({ imported, onClose, onChanged }: Props) {
     const meta: Translation = {
       id,
       name: name.trim() || 'Imported Bible',
-      abbr: abbr.trim() || name.trim().slice(0, 6).toUpperCase() || 'BIBLE',
+      abbr: abbr.trim() || abbreviate(name) || 'BIBLE',
       language: language.trim() || 'Other',
       langCode: langCode.trim() || 'und',
       license: 'Imported',
@@ -93,10 +164,11 @@ export function ImportDialog({ imported, onClose, onChanged }: Props) {
         </label>
         {busy && <p className="hint">Reading…</p>}
         {error && <p className="hint error">{error}</p>}
+        {skipped && <p className="hint">{skipped}</p>}
         {parsed && (
           <>
             <p className="hint ok">
-              Found {parsed.verses.toLocaleString()} verses in {parsed.books} books.
+              Found {count(parsed.verses, 'verse')} in {count(parsed.books, 'book')}.
             </p>
             <label>
               <span>Name</span>

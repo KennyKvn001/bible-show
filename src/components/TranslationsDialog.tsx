@@ -8,8 +8,9 @@ export function TranslationsDialog({ imported, onClose }: { imported: Translatio
       <p className="hint">
         Built-in texts come from the <a href="https://github.com/BibleNLP/ebible" target="_blank" rel="noreferrer">eBible corpus</a>,{' '}
         <a href="https://github.com/seven1m/open-bibles" target="_blank" rel="noreferrer">open-bibles</a> and the{' '}
-        <a href="https://github.com/BibleCorps/FRA-B-LSG1910-PD-UBS" target="_blank" rel="noreferrer">UBS Louis Segond</a>. Each one is
-        public domain or freely licensed; Creative Commons texts are shown unchanged with credit to the rights holder.
+        <a href="https://github.com/BibleCorps/FRA-B-LSG1910-PD-UBS" target="_blank" rel="noreferrer">UBS Louis Segond</a>, with a few
+        verses the eBible corpus drops taken from <a href="https://github.com/wldeh/bible-api" target="_blank" rel="noreferrer">wldeh/bible-api</a>.
+        Each one is public domain or freely licensed; Creative Commons texts are shown unchanged with credit to the rights holder.
       </p>
       <table className="license-table">
         <thead>
