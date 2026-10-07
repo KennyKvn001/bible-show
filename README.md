@@ -72,8 +72,8 @@ npm install
 npm run dev
 ```
 
-`npm run build` type-checks and builds to `dist/`, which can go on any static host. Every push to `main` deploys to GitHub
-Pages through `.github/workflows/deploy.yml` (in the repo settings, Pages → Source must be **GitHub Actions**).
+`npm run build` type-checks and builds to `dist/`, which can go on any static host (Netlify, Cloudflare Pages, GitHub
+Pages, or a plain web server). Every push to `main` runs lint and build in `.github/workflows/ci.yml`.
 
 The Bible texts are committed as gzipped JSON in `public/bibles/`. To add or refresh a translation, edit
 `src/data/catalog.json` (see the source types at the top of `scripts/build-data.mjs`) and run `npm run data` (Node 22.6 or
