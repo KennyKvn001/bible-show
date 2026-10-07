@@ -6,9 +6,10 @@ export function TranslationsDialog({ imported, onClose }: { imported: Translatio
   return (
     <Dialog title="Translations & licenses" onClose={onClose}>
       <p className="hint">
-        Built-in texts come from the <a href="https://github.com/BibleNLP/ebible" target="_blank" rel="noreferrer">eBible corpus</a> and{' '}
-        <a href="https://github.com/seven1m/open-bibles" target="_blank" rel="noreferrer">open-bibles</a>. Each one is public domain or
-        freely licensed; Creative Commons texts are shown unchanged with credit to the rights holder.
+        Built-in texts come from the <a href="https://github.com/BibleNLP/ebible" target="_blank" rel="noreferrer">eBible corpus</a>,{' '}
+        <a href="https://github.com/seven1m/open-bibles" target="_blank" rel="noreferrer">open-bibles</a> and the{' '}
+        <a href="https://github.com/BibleCorps/FRA-B-LSG1910-PD-UBS" target="_blank" rel="noreferrer">UBS Louis Segond</a>. Each one is
+        public domain or freely licensed; Creative Commons texts are shown unchanged with credit to the rights holder.
       </p>
       <table className="license-table">
         <thead>

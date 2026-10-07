@@ -2,16 +2,28 @@ import type { BibleData } from './bible.ts';
 import { BOOKS, BOOK_CODES, bookByCode, bookByOsis } from './books.ts';
 
 /**
- * Parses Zefania XML, OSIS XML, USFX XML, or JSON Bible files into BibleData.
+ * Parses USFM, Zefania XML, OSIS XML, USFX XML, or JSON Bible files into BibleData.
  * Uses a small tag tokenizer instead of DOMParser so it also runs in Node (scripts/build-data.mjs).
  */
 export function parseBible(text: string): BibleData {
   const head = text.slice(0, 4000).replace(/^\uFEFF/, '').trimStart();
   if (head.startsWith('{') || head.startsWith('[')) return parseJson(JSON.parse(text));
+  if (head.startsWith('\\') || /^\\(id|c|v) /m.test(head)) return parseUsfm(text);
   if (/<XMLBIBLE|<BIBLEBOOK/i.test(head) || /<BIBLEBOOK/.test(text.slice(0, 200000))) return parseZefania(text);
   if (/<osis[\s>]/.test(head) || /<osis[\s>]/.test(text.slice(0, 20000))) return parseOsis(text);
   if (/<usfx[\s>]/.test(text.slice(0, 20000))) return parseUsfx(text);
-  throw new Error('Unrecognised file. Supported formats: Zefania XML, OSIS XML, USFX XML and JSON.');
+  throw new Error('Unrecognised file. Supported formats: USFM, Zefania XML, OSIS XML, USFX XML and JSON.');
+}
+
+/** Combines Bibles split over several files (for example one USFM file per book). Later files win on overlap. */
+export function mergeBibles(parts: BibleData[]): BibleData {
+  const out: BibleData = { books: {}, names: {} };
+  for (const p of parts) {
+    Object.assign(out.books, p.books);
+    Object.assign(out.names!, p.names ?? {});
+  }
+  if (!Object.keys(out.names!).length) delete out.names;
+  return out;
 }
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -163,6 +175,78 @@ function parseUsfx(xml: string): BibleData {
     }
     b.add(s);
   });
+  return b.result();
+}
+
+// USFM paragraph markers whose line holds headings, titles, references or introductions rather than verse text.
+const USFM_SKIP_LINE = /^(id|ide|h\d*|toca?\d*|mte?\d*|ms\d*|mr|sr?\d*|r|d|sp|rem|sts|restore|cl|cd|imte?\d*|is\d*|ipi?|imi?|ipq|imq|ipr|iq\d*|ib|ili\d*|iot|io\d*|iex|ie|lit|qa|periph|usfm)$/;
+// Notes and other spans whose whole content is left out, up to their closing marker.
+const USFM_SKIP_SPAN = /^(f|fe|ef|x|ex|fig|va|vp|ca|rq|cat)$/;
+// Inline character styles: their text is kept and they do not start a new word.
+const USFM_CHAR = /^(add|addpn|bd|bdit|bk|dc|em|it|jmp|k|lik|liv\d*|nd|no|ord|pn|png|qac|qs|qt|rb|sc|sig|sls|sup|tl|w|wa|wg|wh|wj)$/;
+
+function parseUsfm(usfm: string): BibleData {
+  const b = new Builder();
+  let book = '';
+  let chapter = 0;
+  for (const line of usfm.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    let skipLine = false;
+    let span = '';
+    let inWord = false;
+    let pending: 'id' | 'c' | 'v' | 'name' | '' = '';
+    for (const m of line.matchAll(/\\(\+?)([a-z]+\d*)(\*?)|([^\\]+)/g)) {
+      if (m[4] !== undefined) {
+        let text = m[4];
+        if (pending === 'id') {
+          b.end();
+          book = bookByCode(text.trim().slice(0, 3))?.code ?? '';
+          chapter = 0;
+          skipLine = true;
+        } else if (pending === 'c') {
+          b.end();
+          chapter = parseInt(text, 10) || 0;
+        } else if (pending === 'v') {
+          const v = /^\s*(\d+)\S*\s?([\s\S]*)$/.exec(text);
+          b.start(book, chapter, v ? Number(v[1]) : 0);
+          text = v ? v[2] : '';
+        } else if (pending === 'name') {
+          if (book && text.trim()) b.names[book] = text.trim();
+        }
+        pending = '';
+        if (skipLine || span) continue;
+        if (inWord) text = text.split('|')[0];
+        b.add(text);
+        continue;
+      }
+      const [, , name, close] = m;
+      if (span) {
+        if (close && name === span) span = '';
+        continue;
+      }
+      if (USFM_SKIP_SPAN.test(name)) {
+        if (!close) span = name;
+      } else if (name === 'id') {
+        pending = 'id';
+      } else if (name === 'c') {
+        pending = 'c';
+        skipLine = false;
+      } else if (name === 'v') {
+        pending = 'v';
+        skipLine = false;
+      } else if (name === 'toc2' || (name === 'h' && book && !b.names[book])) {
+        pending = 'name';
+        skipLine = true;
+      } else if (USFM_SKIP_LINE.test(name)) {
+        b.add(' ');
+        skipLine = true;
+      } else if (name === 'w') {
+        inWord = !close;
+      } else if (!close && !USFM_CHAR.test(name)) {
+        b.add(' ');
+      }
+    }
+    b.add(' ');
+  }
   return b.result();
 }
 

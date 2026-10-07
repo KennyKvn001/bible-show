@@ -15,27 +15,36 @@ export const BUILT_IN: Translation[] = catalog.map(({ id, abbr, name, language, 
 const cache = new Map<string, Promise<BibleData>>();
 
 async function gunzip(bytes: ArrayBuffer): Promise<string> {
-  if (typeof DecompressionStream === 'undefined') throw new Error('This browser is too old to open the Bible texts. Please update it.');
+  if (typeof DecompressionStream === 'undefined') {
+    // Older browsers (e.g. Safari before 16.4): load a small inflate library only when needed.
+    const { gunzipSync, strFromU8 } = await import('fflate');
+    return strFromU8(gunzipSync(new Uint8Array(bytes)));
+  }
   return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
 }
 
 /** Built-in texts ship as gzipped JSON in public/bibles (see scripts/build-data.mjs). */
 async function fetchBuiltIn(t: Translation): Promise<BibleData> {
-  let res: Response;
+  let text: string;
   try {
-    res = await fetch(`${import.meta.env.BASE_URL}bibles/${t.id}.json.gz`);
+    const res = await fetch(`${import.meta.env.BASE_URL}bibles/${t.id}.json.gz`);
+    if (res.status === 404) throw new Error('missing');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const bytes = await res.arrayBuffer();
+    // Some servers already decompress .gz files on the way (Content-Encoding: gzip), so only unzip real gzip data.
+    const head = new Uint8Array(bytes, 0, Math.min(2, bytes.byteLength));
+    text = head[0] === 0x1f && head[1] === 0x8b ? await gunzip(bytes) : new TextDecoder().decode(bytes);
+  } catch (e) {
+    if ((e as Error).message === 'missing') throw new Error(`${t.name} could not be found on this site.`);
+    throw new Error(`Could not load ${t.name}. Check your internet connection and try again.`);
+  }
+  // A server that answers every path with the app page means the Bible files were not deployed.
+  if (!text.trimStart().startsWith('{')) throw new Error(`${t.name} could not be found on this site.`);
+  try {
+    return JSON.parse(text) as BibleData;
   } catch {
-    throw new Error(`Could not download ${t.name}. Check your internet connection and try again.`);
+    throw new Error(`Could not read ${t.name}. Reload the page to try again.`);
   }
-  if (!res.ok) throw new Error(`Could not load ${t.name} (HTTP ${res.status}).`);
-  const bytes = await res.arrayBuffer();
-  // Some servers already decompress .gz files on the way (Content-Encoding: gzip), so only unzip real gzip data.
-  const head = new Uint8Array(bytes, 0, Math.min(2, bytes.byteLength));
-  const text = head[0] === 0x1f && head[1] === 0x8b ? await gunzip(bytes) : new TextDecoder().decode(bytes);
-  if (!text.trimStart().startsWith('{')) {
-    throw new Error(`The Bible text for ${t.name} is missing from this site. Run "npm run data" and build again.`);
-  }
-  return JSON.parse(text) as BibleData;
 }
 
 export function loadBible(t: Translation): Promise<BibleData> {

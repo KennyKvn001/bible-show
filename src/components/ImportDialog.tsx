@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { BibleData, Translation } from '../lib/bible.ts';
 import { deleteImported, saveImported } from '../lib/idb.ts';
-import { parseBible } from '../lib/importers.ts';
+import { mergeBibles, parseBible } from '../lib/importers.ts';
 import { forgetBible } from '../lib/library.ts';
 import { Dialog } from './Dialog.tsx';
 
@@ -21,16 +21,28 @@ export function ImportDialog({ imported, onClose, onChanged }: Props) {
   const [language, setLanguage] = useState('Ikinyarwanda');
   const [langCode, setLangCode] = useState('rw');
 
-  const onFile = async (file: File | undefined) => {
+  const onFiles = async (list: FileList | null) => {
     setParsed(null);
     setError('');
-    if (!file) return;
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
     setBusy(true);
     try {
-      const data = parseBible(await file.text());
+      // Several files are combined, e.g. a USFM Bible with one file per book. Files without verses are skipped.
+      const parts = [];
+      let firstError = '';
+      for (const file of files) {
+        try {
+          parts.push(parseBible(await file.text()));
+        } catch (e) {
+          firstError ||= `${file.name}: ${(e as Error).message}`;
+        }
+      }
+      if (!parts.length) throw new Error(firstError || 'No verses found.');
+      const data = mergeBibles(parts);
       const verses = Object.values(data.books).flat(2).filter(Boolean).length;
       setParsed({ data, verses, books: Object.keys(data.books).length });
-      if (!name) setName(file.name.replace(/\.(xml|json|osis|usfx|zefania)+$/i, '').replace(/[-_]/g, ' '));
+      if (!name) setName(files.length === 1 ? files[0].name.replace(/\.(xml|json|osis|usfx|zefania|usfm|sfm|txt)+$/i, '').replace(/[-_]/g, ' ') : '');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -66,12 +78,18 @@ export function ImportDialog({ imported, onClose, onChanged }: Props) {
   return (
     <Dialog title="Import a Bible" onClose={onClose}>
       <p className="hint">
-        Load a Bible you are allowed to use, for example a Kinyarwanda translation your church has rights to. Supported files: Zefania
-        XML, OSIS XML, USFX XML and JSON. The file stays in this browser and is never uploaded.
+        Load a Bible you are allowed to use, for example a Kinyarwanda translation your church has rights to. Supported files: USFM
+        (select all the book files at once), Zefania XML, OSIS XML, USFX XML and JSON. Files stay in this browser and are
+        never uploaded.
       </p>
       <form onSubmit={save} className="import-form">
         <label className="file">
-          <input type="file" accept=".xml,.json,.osis,.usfx,application/xml,application/json,text/xml" onChange={(e) => onFile(e.target.files?.[0])} />
+          <input
+            type="file"
+            multiple
+            accept=".usfm,.sfm,.txt,.xml,.json,.osis,.usfx,application/xml,application/json,text/xml,text/plain"
+            onChange={(e) => onFiles(e.target.files)}
+          />
         </label>
         {busy && <p className="hint">Reading…</p>}
         {error && <p className="hint error">{error}</p>}

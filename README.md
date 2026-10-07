@@ -12,7 +12,8 @@ translation, type a reference, and send it to an output window you share in Zoom
 - **Two translations at once**: show, for example, English and Swahili together.
 - **Output styles**: dark, light, blue, green screen (for chroma key) or transparent background, full screen or lower third,
   adjustable text size. Text shrinks automatically so long passages always fit.
-- **Import your own Bible**: load a Zefania XML, OSIS XML, USFX XML or JSON file. It is saved in your browser only.
+- **Import your own Bible**: load USFM (all book files at once), Zefania XML, OSIS XML, USFX XML or JSON. It is saved in your
+  browser only.
 - **Keyboard**: `↓`/`→`/Space next, `↑`/`←` previous, `Enter` go live, `B` blank, `Esc` clear, `/` jump to the reference box.
 
 ## Using it in a meeting or stream
@@ -51,14 +52,18 @@ For OBS with a green or transparent background, use the green-screen theme with 
 | हिन्दी | इंडियन रिवाइज्ड वर्जन हिंदी (IRV) | CC BY-SA 4.0 (Bridge Connectivity Solutions) |
 | 中文 | 和合本 (简体) (CUVS) | Public Domain |
 
-Texts come from the [eBible corpus](https://github.com/BibleNLP/ebible) and [open-bibles](https://github.com/seven1m/open-bibles).
+Texts come from the [eBible corpus](https://github.com/BibleNLP/ebible), [open-bibles](https://github.com/seven1m/open-bibles)
+and, for Louis Segond, the [UBS USFM edition](https://github.com/BibleCorps/FRA-B-LSG1910-PD-UBS). Most translations use English
+verse numbers. Louis Segond, Luther 1912 and the Synodal translation keep their own numbering (for example, some Psalm titles count
+as verse 1), so with two translations side by side a few chapters can be offset by a verse or two.
 Creative Commons texts are shown unchanged with credit to the rights holder. The Somali text is CC BY-NC-ND, so do not
 use this app with it for commercial purposes.
 
 ### Kinyarwanda
 
 No Kinyarwanda Bible with a free license was found (Bibiliya Yera and the other common versions are copyrighted by the Bible
-Society of Rwanda). Use **Import Bible** to load a Kinyarwanda file you have permission to use. It stays in your browser.
+Society of Rwanda). Use **Import Bible** to load a Kinyarwanda file you have permission to use (USFM, Zefania XML, OSIS or JSON). It stays in your
+browser.
 
 ## Development
 
@@ -71,7 +76,7 @@ npm run dev
 Pages through `.github/workflows/deploy.yml` (in the repo settings, Pages → Source must be **GitHub Actions**).
 
 The Bible texts are committed as gzipped JSON in `public/bibles/`. To add or refresh a translation, edit
-`src/data/catalog.json` (an eBible corpus file name, or `"source": "open-bibles"` with an XML file name) and run
-`npm run data` (Node 22.6 or newer), which downloads the sources into `.cache/` and rewrites `public/bibles/`.
+`src/data/catalog.json` (see the source types at the top of `scripts/build-data.mjs`) and run `npm run data` (Node 22.6 or
+newer), which downloads the sources into `.cache/`, checks every book and chapter is present, and rewrites `public/bibles/`.
 
 The app code is MIT licensed. Bible texts keep their own licenses listed above.

@@ -4,3 +4,5 @@ dist
 .DS_Store
 # Downloaded sources for `npm run data`
 .cache
+# Uncompressed output from older versions of `npm run data`
+public/bibles/*.json

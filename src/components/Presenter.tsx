@@ -29,11 +29,13 @@ function readPrefs(): Prefs {
   }
 }
 
-function useBible(t: Translation | undefined) {
+/** Loads a translation; bump `attempt` to retry after an error (failed loads are not cached). */
+function useBible(t: Translation | undefined, attempt: number) {
   const [state, setState] = useState<{ id?: string; data?: BibleData; error?: string }>({});
   useEffect(() => {
     if (!t) return;
     let alive = true;
+    setState((s) => (s.id === t.id && s.error ? {} : s));
     loadBible(t).then(
       (data) => alive && setState({ id: t.id, data }),
       (e: Error) => alive && setState({ id: t.id, error: e.message }),
@@ -41,7 +43,7 @@ function useBible(t: Translation | undefined) {
     return () => {
       alive = false;
     };
-  }, [t]);
+  }, [t, attempt]);
   return state.id === t?.id ? state : {};
 }
 
@@ -87,8 +89,9 @@ export function Presenter() {
   const all = useMemo(() => [...imported, ...BUILT_IN], [imported]);
   const primaryT = all.find((t) => t.id === prefs.primary) ?? BUILT_IN[0];
   const secondaryT = prefs.secondary ? all.find((t) => t.id === prefs.secondary) : undefined;
-  const primary = useBible(primaryT);
-  const secondary = useBible(secondaryT);
+  const [attempt, setAttempt] = useState(0);
+  const primary = useBible(primaryT, attempt);
+  const secondary = useBible(secondaryT, attempt);
 
   useEffect(() => {
     try {
@@ -266,7 +269,12 @@ export function Presenter() {
         </div>
       </header>
 
-      {loadingError && <div className="banner error">{loadingError}</div>}
+      {loadingError && (
+        <div className="banner error" role="alert">
+          <span>{loadingError}</span>
+          <button onClick={() => setAttempt((a) => a + 1)}>Try again</button>
+        </div>
+      )}
 
       <main className="columns">
         <section className="panel nav-panel">
