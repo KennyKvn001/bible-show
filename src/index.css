@@ -70,6 +70,14 @@ button.go-live {
   font-weight: 600;
 }
 
+button.cancel-live {
+  background: var(--live);
+  border-color: var(--live);
+  color: #fff;
+  font-weight: 600;
+  padding: 8px;
+}
+
 button.active {
   background: var(--accent);
   border-color: var(--accent);

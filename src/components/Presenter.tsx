@@ -3,7 +3,7 @@ import type { BibleData, Translation, VerseRef } from '../lib/bible.ts';
 import { BOOKS, bookByCode } from '../lib/books.ts';
 import { listImported } from '../lib/idb.ts';
 import { BUILT_IN, loadBible } from '../lib/library.ts';
-import { publishLive, readLive, type DisplayStyle, type LiveState, type Slide } from '../lib/live.ts';
+import { publishLive, readLive, sendCommand, type LiveState, type Slide } from '../lib/live.ts';
 import { formatReference, normalize, parseReference } from '../lib/reference.ts';
 import { ImportDialog } from './ImportDialog.tsx';
 import { Screen } from './Screen.tsx';
@@ -16,6 +16,9 @@ interface Prefs {
   book: string;
   chapter: number;
   verse: number;
+  /** live mode and what is on screen, so reloading the presenter keeps the output as it was */
+  live?: boolean;
+  liveRef?: VerseRef | null;
 }
 
 const PREFS_KEY = 'bible-show:prefs';
@@ -71,7 +74,14 @@ export function Presenter() {
   const [imported, setImported] = useState<Translation[]>([]);
   const [prefs, setPrefs] = useState(readPrefs);
   const [sel, setSel] = useState<VerseRef>(() => ({ book: prefs.book, chapter: prefs.chapter, verse: prefs.verse, verseEnd: prefs.verse }));
-  const [live, setLive] = useState<LiveState>(readLive);
+  const [initialLive] = useState(readLive);
+  // Live mode: after Go live, every verse picked goes straight to the output until Cancel live.
+  const [isLive, setIsLive] = useState(() => prefs.live ?? Boolean(initialLive.slide));
+  const [liveRef, setLiveRef] = useState<VerseRef | null>(() => (prefs.live ? (prefs.liveRef ?? null) : null));
+  const [blank, setBlank] = useState(initialLive.blank);
+  const [style, setStyle] = useState(initialLive.style);
+  const outputWindow = useRef<Window | null>(null);
+  const [popupBlocked, setPopupBlocked] = useState(false);
   const [refInput, setRefInput] = useState('');
   const [refError, setRefError] = useState('');
   const [tab, setTab] = useState<'browse' | 'search'>('browse');
@@ -95,26 +105,69 @@ export function Presenter() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify({ ...prefs, book: sel.book, chapter: sel.chapter, verse: sel.verse }));
+      const saved: Prefs = { ...prefs, book: sel.book, chapter: sel.chapter, verse: sel.verse, live: isLive, liveRef };
+      localStorage.setItem(PREFS_KEY, JSON.stringify(saved));
     } catch {
       /* storage unavailable */
     }
-  }, [prefs, sel]);
-
-  useEffect(() => publishLive(live), [live]);
+  }, [prefs, sel, isLive, liveRef]);
 
   const sources = useMemo(
     () => [{ t: primaryT, data: primary.data }, ...(secondaryT ? [{ t: secondaryT, data: secondary.data }] : [])],
     [primaryT, primary.data, secondaryT, secondary.data],
   );
   const preview = useMemo(() => buildSlide(sel, sources), [sel, sources]);
+  // The live slide follows the live reference and the chosen translations, so switching translation updates the screen.
+  const liveSlide = useMemo(() => (liveRef ? buildSlide(liveRef, sources) : null), [liveRef, sources]);
+  const live: LiveState = useMemo(() => ({ slide: liveSlide, blank, style }), [liveSlide, blank, style]);
+  const loading = (!primary.data && !primary.error) || Boolean(secondaryT && !secondary.data && !secondary.error);
+
+  useEffect(() => {
+    // While a translation loads, keep what the output shows instead of flashing it empty.
+    if (liveRef && loading) return;
+    publishLive(live);
+  }, [live, liveRef, loading]);
 
   const chapterVerses = primary.data?.books[sel.book]?.[sel.chapter - 1] ?? [];
 
-  const goLive = useCallback((ref: VerseRef = sel) => {
-    const slide = buildSlide(ref, sources);
-    if (slide) setLive((l) => ({ ...l, slide, blank: false }));
-  }, [sel, sources]);
+  const openOutput = useCallback(() => {
+    if (outputWindow.current && !outputWindow.current.closed) return outputWindow.current.focus();
+    outputWindow.current = window.open(`${location.pathname}${location.search}#/output`, 'bible-show-output', 'popup,width=1280,height=720');
+    setPopupBlocked(!outputWindow.current);
+  }, []);
+
+  /** Shows `ref` on the output and turns live mode on, opening the output window if it is closed. */
+  const goLive = useCallback(
+    (ref: VerseRef = sel) => {
+      if (!isLive) openOutput();
+      setIsLive(true);
+      setLiveRef(ref);
+      setBlank(false);
+    },
+    [sel, isLive, openOutput],
+  );
+
+  /** Clears the output, leaves live mode and closes the output window. */
+  const cancelLive = useCallback(() => {
+    setIsLive(false);
+    setLiveRef(null);
+    setBlank(false);
+    outputWindow.current?.close();
+    outputWindow.current = null;
+    sendCommand('close'); // also reaches an output window opened before this page was reloaded
+  }, []);
+
+  /** Selects verses; in live mode they go to the output at once. */
+  const select = useCallback(
+    (ref: VerseRef) => {
+      setSel(ref);
+      if (isLive) {
+        setLiveRef(ref);
+        setBlank(false);
+      }
+    },
+    [isLive],
+  );
 
   /** Moves the selection by one block of the same size, crossing chapter and book boundaries. */
   const step = useCallback(
@@ -138,16 +191,10 @@ export function Presenter() {
         else return;
         verse = Math.max(1, count(book, chapter) - size + 1);
       }
-      const next = { book, chapter, verse, verseEnd: Math.min(verse + size - 1, Math.max(verse, count(book, chapter))) };
-      setSel(next);
-      goLive(next);
+      select({ book, chapter, verse, verseEnd: Math.min(verse + size - 1, Math.max(verse, count(book, chapter))) });
     },
-    [primary.data, sel, goLive],
+    [primary.data, sel, select],
   );
-
-  const setBlank = (blank: boolean) => setLive((l) => ({ ...l, blank }));
-  const clear = () => setLive((l) => ({ ...l, slide: null, blank: false }));
-  const setStyle = (style: DisplayStyle) => setLive((l) => ({ ...l, style }));
 
   // Keep the selected verse in view when the verse column scrolls on its own (not on phones, where the page scrolls).
   useEffect(() => {
@@ -168,8 +215,7 @@ export function Presenter() {
       if (k === 'ArrowDown' || k === 'ArrowRight' || k === 'PageDown' || k === ' ') step(1);
       else if (k === 'ArrowUp' || k === 'ArrowLeft' || k === 'PageUp') step(-1);
       else if (k === 'Enter') goLive();
-      else if (k === 'b' || k === 'B' || k === '.') setLive((l) => ({ ...l, blank: !l.blank }));
-      else if (k === 'Escape') clear();
+      else if (k === 'b' || k === 'B' || k === '.') setBlank((b) => !b);
       else if (k === '/') refBox.current?.focus();
       else return;
       e.preventDefault();
@@ -193,7 +239,7 @@ export function Presenter() {
     const verses = primary.data?.books[ref.book]?.[ref.chapter - 1]?.length ?? ref.verseEnd;
     const clamped = { ...ref, verse: Math.min(ref.verse, verses), verseEnd: Math.min(ref.verseEnd, verses) };
     setRefError('');
-    setSel(clamped);
+    select(clamped);
     setPicking('chapter');
     setTab('browse');
     refBox.current?.blur();
@@ -216,12 +262,8 @@ export function Presenter() {
   }, [query, primary.data]);
 
   const onVerseClick = (n: number, e: React.MouseEvent) => {
-    if (e.shiftKey && sel.book && n !== sel.verse) setSel({ ...sel, verse: Math.min(sel.verse, n), verseEnd: Math.max(sel.verse, n) });
-    else setSel({ ...sel, verse: n, verseEnd: n });
-  };
-
-  const openOutput = () => {
-    window.open(`${location.pathname}${location.search}#/output`, 'bible-show-output', 'popup,width=1280,height=720');
+    if (e.shiftKey && n !== sel.verse) select({ ...sel, verse: Math.min(sel.verse, n), verseEnd: Math.max(sel.verse, n) });
+    else select({ ...sel, verse: n, verseEnd: n });
   };
 
   const translationSelect = (value: string, onChange: (id: string) => void, allowNone: boolean) => (
@@ -247,7 +289,7 @@ export function Presenter() {
   );
 
   const loadingError = primary.error ?? secondary.error;
-  const onAir = Boolean(live.slide && !live.blank);
+  const status = !isLive ? 'Off' : blank ? 'Blanked' : 'Live';
 
   return (
     <div className="presenter">
@@ -269,6 +311,12 @@ export function Presenter() {
         </div>
       </header>
 
+      {popupBlocked && (
+        <div className="banner error" role="alert">
+          <span>The browser blocked the output window. Allow pop-ups for this site, then click Open output window.</span>
+          <button onClick={() => setPopupBlocked(false)}>Dismiss</button>
+        </div>
+      )}
       {loadingError && (
         <div className="banner error" role="alert">
           <span>{loadingError}</span>
@@ -349,7 +397,7 @@ export function Presenter() {
                 {results.map((r) => (
                   <li key={`${r.book}${r.chapter}:${r.verse}`}>
                     <button
-                      onClick={() => setSel(r)}
+                      onClick={() => select(r)}
                       onDoubleClick={() => {
                         setSel(r);
                         goLive(r);
@@ -387,7 +435,9 @@ export function Presenter() {
             )}
           </ol>
           <p className="hint keys">
-            Click to preview · Shift‑click for a range · Double‑click or Enter to go live · ↑ ↓ previous / next · B blank · Esc clear
+            {isLive
+              ? 'Live: every verse you click shows on the output · Shift‑click for a range · ↑ ↓ previous / next · B blank'
+              : 'Click to preview · Shift‑click for a range · Double‑click or Enter to go live · ↑ ↓ previous / next · B blank'}
           </p>
         </section>
 
@@ -399,13 +449,19 @@ export function Presenter() {
             <Screen state={{ slide: preview, blank: false, style: live.style }} />
           </div>
           <div className="controls">
-            <button className="go-live" onClick={() => goLive()} disabled={!preview}>
-              Go live ⏎
-            </button>
+            {isLive ? (
+              <button className="cancel-live" onClick={cancelLive} title="Clear the output and close its window">
+                Cancel live
+              </button>
+            ) : (
+              <button className="go-live" onClick={() => goLive()} disabled={!preview}>
+                Go live ⏎
+              </button>
+            )}
           </div>
 
           <div className="monitor-label">
-            <span className={`on-air${onAir ? ' is-on' : ''}`}>{onAir ? 'Live' : live.blank ? 'Blanked' : 'Off'}</span>
+            <span className={`on-air${status === 'Live' ? ' is-on' : ''}`}>{status}</span>
             <span>{live.slide?.reference}</span>
           </div>
           <div className="monitor">
@@ -414,20 +470,19 @@ export function Presenter() {
           <div className="controls">
             <button onClick={() => step(-1)} title="Previous (↑)">◀ Prev</button>
             <button onClick={() => step(1)} title="Next (↓)">Next ▶</button>
-            <button className={live.blank ? 'active' : ''} onClick={() => setBlank(!live.blank)} title="Blank (B)">
-              {live.blank ? 'Unblank' : 'Blank'}
+            <button className={blank ? 'active' : ''} onClick={() => setBlank(!blank)} disabled={!isLive} title="Blank (B)">
+              {blank ? 'Unblank' : 'Blank'}
             </button>
-            <button onClick={clear} title="Clear (Esc)">Clear</button>
           </div>
 
-          <StylePanel style={live.style} onChange={setStyle} />
+          <StylePanel style={style} onChange={setStyle} />
         </section>
       </main>
 
       <footer className="footer">
         <button className="link" onClick={() => setDialog('translations')}>Translations &amp; licenses</button>
         <span>
-          For OBS or Zoom: open the output window, then share that window or add it as a Window Capture.
+          Go live opens the output window; share it in Zoom or add it in OBS as a Window Capture. Cancel live closes it.
         </span>
       </footer>
 

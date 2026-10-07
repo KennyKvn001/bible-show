@@ -1,3 +1,4 @@
+import bookNames from '../data/book-names.json';
 import catalog from '../data/catalog.json';
 import type { BibleData, Translation } from './bible.ts';
 import { getImported } from './idb.ts';
@@ -41,7 +42,10 @@ async function fetchBuiltIn(t: Translation): Promise<BibleData> {
   // A server that answers every path with the app page means the Bible files were not deployed.
   if (!text.trimStart().startsWith('{')) throw new Error(`${t.name} could not be found on this site.`);
   try {
-    return JSON.parse(text) as BibleData;
+    const data = JSON.parse(text) as BibleData;
+    // Book names in the translation's own language (src/data/book-names.json, from scripts/book-names.mjs).
+    const names = (bookNames as Record<string, Record<string, string>>)[t.id];
+    return names ? { ...data, names } : data;
   } catch {
     throw new Error(`Could not read ${t.name}. Reload the page to try again.`);
   }

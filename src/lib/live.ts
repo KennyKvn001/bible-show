@@ -43,6 +43,7 @@ export const DEFAULT_STYLE: DisplayStyle = {
 };
 
 const KEY = 'bible-show:live';
+const COMMAND_KEY = 'bible-show:command';
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('bible-show') : null;
 
 export function readLive(): LiveState {
@@ -65,9 +66,44 @@ export function publishLive(state: LiveState) {
 }
 
 export function subscribeLive(fn: (s: LiveState) => void): () => void {
-  const onMessage = (e: MessageEvent<LiveState>) => fn(e.data);
+  const onMessage = (e: MessageEvent<LiveState | { command: string }>) => {
+    if (!('command' in e.data)) fn(e.data);
+  };
   const onStorage = (e: StorageEvent) => {
     if (e.key === KEY) fn(readLive());
+  };
+  channel?.addEventListener('message', onMessage);
+  window.addEventListener('storage', onStorage);
+  return () => {
+    channel?.removeEventListener('message', onMessage);
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
+export type Command = 'close';
+
+/** Tells output windows to act, e.g. close themselves when live is cancelled. */
+export function sendCommand(command: Command) {
+  channel?.postMessage({ command });
+  try {
+    // A changing value so the storage event fires every time.
+    localStorage.setItem(COMMAND_KEY, JSON.stringify({ command, at: Date.now() }));
+  } catch {
+    /* storage unavailable; the channel still works */
+  }
+}
+
+export function subscribeCommands(fn: (command: Command) => void): () => void {
+  const onMessage = (e: MessageEvent<{ command?: Command }>) => {
+    if (e.data && 'command' in e.data && e.data.command) fn(e.data.command);
+  };
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== COMMAND_KEY || !e.newValue) return;
+    try {
+      fn((JSON.parse(e.newValue) as { command: Command }).command);
+    } catch {
+      /* ignore malformed values */
+    }
   };
   channel?.addEventListener('message', onMessage);
   window.addEventListener('storage', onStorage);
