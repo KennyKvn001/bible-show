@@ -62,16 +62,16 @@ Society of Rwanda). Use **Import Bible** to load a Kinyarwanda file you have per
 
 ## Development
 
-Requires Node 22.6 or newer.
-
 ```bash
 npm install
-npm run data   # downloads the source texts into .cache/ and writes public/bibles/*.json
 npm run dev
 ```
 
-`npm run build` runs the data step, type-checks and builds to `dist/`. Every push to `main` deploys to GitHub Pages through
-`.github/workflows/deploy.yml`. To add a translation, add an entry to `src/data/catalog.json` (an eBible corpus file name, or
-`"source": "open-bibles"` with an XML file name) and run `npm run data`.
+`npm run build` type-checks and builds to `dist/`, which can go on any static host. Every push to `main` deploys to GitHub
+Pages through `.github/workflows/deploy.yml` (in the repo settings, Pages → Source must be **GitHub Actions**).
+
+The Bible texts are committed as gzipped JSON in `public/bibles/`. To add or refresh a translation, edit
+`src/data/catalog.json` (an eBible corpus file name, or `"source": "open-bibles"` with an XML file name) and run
+`npm run data` (Node 22.6 or newer), which downloads the sources into `.cache/` and rewrites `public/bibles/`.
 
 The app code is MIT licensed. Bible texts keep their own licenses listed above.

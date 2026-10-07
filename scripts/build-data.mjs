@@ -1,9 +1,11 @@
-// Builds public/bibles/<id>.json for every entry in src/data/catalog.json.
+// Builds public/bibles/<id>.json.gz for every entry in src/data/catalog.json.
+// The output is committed so a fresh clone runs without this step; rerun it only to add or refresh translations.
 // Sources (downloaded once into .cache/):
 //   ebible      - BibleNLP/ebible corpus: verse-per-line text aligned to metadata/vref.txt
 //   open-bibles - seven1m/open-bibles OSIS/USFX/Zefania XML, parsed with src/lib/importers.ts
 // Usage: node --experimental-strip-types scripts/build-data.mjs
-import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, access, readdir, rm } from 'node:fs/promises';
+import { gzipSync, constants } from 'node:zlib';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseBible } from '../src/lib/importers.ts';
@@ -46,6 +48,9 @@ function fromCorpus(text, vref) {
 const catalog = JSON.parse(await readFile(join(root, 'src', 'data', 'catalog.json'), 'utf8'));
 const vref = (await fetchCached('ebible', 'metadata/vref.txt')).split('\n');
 await mkdir(outDir, { recursive: true });
+// Drop files for translations that are no longer in the catalog (and uncompressed output from older versions).
+const keep = new Set(catalog.map((t) => `${t.id}.json.gz`));
+for (const f of await readdir(outDir)) if (!keep.has(f)) await rm(join(outDir, f));
 
 for (const t of catalog) {
   const source = t.source ?? 'ebible';
@@ -64,6 +69,8 @@ for (const t of catalog) {
     });
   }
   if (count < 7000) throw new Error(`${t.id}: only ${count} verses, source is probably empty`);
-  await writeFile(join(outDir, `${t.id}.json`), JSON.stringify({ books, names: data.names }));
+  // Node writes a zero mtime in the gzip header, so unchanged text gives byte-identical files.
+  const json = JSON.stringify({ books, names: data.names });
+  await writeFile(join(outDir, `${t.id}.json.gz`), gzipSync(json, { level: constants.Z_BEST_COMPRESSION }));
   console.log(`${t.id.padEnd(11)} ${count} verses`);
 }

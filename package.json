@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "data": "node --experimental-strip-types scripts/build-data.mjs",
-    "build": "npm run data && tsc -b && vite build",
+    "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
