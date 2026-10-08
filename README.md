@@ -8,13 +8,15 @@ translation, type a reference, and send it to an output window you share in Zoom
 - **Fast lookup**: type `John 3:16`, `jn 3 16-18`, `Ps 23` or `Yohana 3:16` and press Enter. Book names work in English and
   in several other languages (French, Spanish, Swahili, Kinyarwanda), and in the language of any imported Bible.
 - **Browse and search**: pick a book and chapter, or search for words across the whole Bible.
-- **Preview and live**: click a verse to preview it, press Enter or double-click to put it on screen. Shift-click selects a range.
+- **Preview and live**: click a verse to preview it, then press Enter or double-click to go live. Once live, every verse you
+  pick goes straight to the screen; **Cancel live** clears it and closes the output window. Shift-click selects a range.
 - **Two translations at once**: show, for example, English and Swahili together.
 - **Output styles**: dark, light, blue, green screen (for chroma key) or transparent background, full screen or lower third,
   adjustable text size. Text shrinks automatically so long passages always fit.
 - **Import your own Bible**: load USFM (all book files at once), Zefania XML, OSIS XML, USFX XML or JSON. It is saved in your
   browser only.
-- **Keyboard**: `↓`/`→`/Space next, `↑`/`←` previous, `Enter` go live, `B` blank, `Esc` clear, `/` jump to the reference box.
+- **Keyboard**: `↓`/`→`/`PageDown`/Space next, `↑`/`←`/`PageUp` previous, `Enter` go live, `B` or `.` blank or unblank the
+  screen, `/` jump to the reference box (where `Enter` goes to the reference you typed).
 
 ## Using it in a meeting or stream
 

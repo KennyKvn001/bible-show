@@ -224,12 +224,21 @@ const USFM_SKIP_LINE = /^(id|ide|h\d*|toca?\d*|mte?\d*|ms\d*|mr|sr?\d*|r|d|sp|re
 // Notes, sidebars (\esb ... \esbe) and other spans whose whole content is left out, up to their closing marker.
 const USFM_SKIP_SPAN = /^(f|fe|ef|x|ex|fig|va|vp|ca|rq|cat|esb)$/;
 // Inline character styles: their text is kept and they do not start a new word.
-const USFM_CHAR = /^(add|addpn|bd|bdit|bk|dc|em|it|jmp|k|lik|liv\d*|nd|no|ord|pn|png|qac|qs|qt|rb|ref|sc|sig|sls|sup|tl|w|wa|wg|wh|wj|xt)$/;
+const USFM_CHAR = /^(add|addpn|bd|bdit|bk|dc|em|it|jmp|k|lik|liv\d*|nd|no|ord|pn|png|qac|qs|qt|rb|ref|sc|sig|sls|sup|ta|tl|w|wa|wg|wh|wj|wl|xt)$/;
 // Markers that belong inside a note (\fr, \ft, \xo, \xt...), besides character styles and custom \z markers.
 const USFM_NOTE_PART = /^([fx][a-z]+|z\w*)$/;
 // USFM 3 milestones, such as \qt-s |who="Jesus"\*, \qt-e\*, \ts\* and \zaln-s |x-strong="G39720"\*, hold no text.
 // Only a name and |attributes may come before the \*, so a stray \* cannot take a verse with it.
-const USFM_MILESTONE = /\\[a-z][a-z0-9]*(?:-[se])?[ \t]*(?:\|[^\\\n]*)?\\\*/g;
+const USFM_MILESTONE = /\\[a-z][a-z0-9]*(?:-([se]))?[ \t]*(?:\|[^\\\n]*)?\\\*/g;
+
+/**
+ * What a milestone leaves in the text. In aligned USFM only milestones may separate two words
+ * ("\w care\w*\zaln-s ...\*\w of\w*"), so start milestones and ones without -s or -e (\ts\*) become a space, unless an
+ * opening quote or bracket is right before them ("“\zaln-s ...\*\w Blessed\w*" is "“Blessed"). End milestones vanish.
+ */
+function milestoneText(_: string, kind: string | undefined, at: number, usfm: string): string {
+  return kind === 'e' || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(usfm.slice(Math.max(0, at - 4), at)) ? '' : ' ';
+}
 
 /** Whether a marker ends a note or sidebar whose closing marker is missing. */
 function endsSpan(name: string, span: string): boolean {
@@ -246,7 +255,7 @@ function parseUsfm(usfm: string, strict: boolean): BibleData {
   let spanEnded = false;
   // Open character styles, whose |attributes (\w gracious|strong="H2587"\w*) are left out.
   let chars: string[] = [];
-  for (const line of usfm.replace(/^\uFEFF/, '').replace(USFM_MILESTONE, '').split(/\r?\n/)) {
+  for (const line of usfm.replace(/^\uFEFF/, '').replace(USFM_MILESTONE, milestoneText).split(/\r?\n/)) {
     let skipLine = false;
     let opened = false;
     let pending: 'id' | 'c' | 'v' | 'name' | '' = '';
@@ -323,7 +332,8 @@ function parseUsfm(usfm: string, strict: boolean): BibleData {
         }
       }
     }
-    b.add(' ');
+    // Not inside a note that wraps onto the next line: "written\f ...⏎...\f*: God" reads "written: God", as on one line.
+    if (!span) b.add(' ');
   }
   return b.result();
 }

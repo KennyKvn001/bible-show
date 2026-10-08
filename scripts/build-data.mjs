@@ -5,8 +5,9 @@
 //                 EBIBLE_OWN keeps each translation's own verse labels and splits, but drops labels missing from vref
 //                 (Malachi 4, Joel 3, ...); EBIBLE_ORIGINAL converts every verse to Original versification, which keeps
 //                 them all but joins verses that Original counts as one. Original numbers are mapped to English with
-//                 metadata/eng.vrs. A few verses missing from both (2 Corinthians 13:14) come from wldeh/bible-api when
-//                 the entry names a "wldeh" version, after checking that version has the same text around them.
+//                 metadata/eng.vrs. A few verses missing from both (2 Corinthians 13:14) come from the same translation
+//                 elsewhere, after checking it has the same text around them: wldeh/bible-api when the entry names a
+//                 "wldeh" version, or an open-bibles file named by "openBibles".
 //   open-bibles - seven1m/open-bibles OSIS/USFX/Zefania XML, parsed with src/lib/importers.ts
 //   usfm        - one USFM file per book in a GitHub repo: "repo", "commit", and a "pattern" with {num}
 //                 (Paratext book number: GEN=01, MAL=39, MAT=41) and {code} (USFM code). "fixes" lists source typos
@@ -27,23 +28,34 @@ const WLDEH = '1d6987e268fcadb1e96ceb487e3d365a5e837f4a';
 const RAW = 'https://raw.githubusercontent.com';
 const outDir = join(root, 'public', 'bibles');
 // English verses that many translations leave out or move to a footnote; an empty slot here is expected.
+// Books whose verses wldeh sometimes cuts to their first line.
+const POETRY = new Set(['JOB', 'PSA', 'PRO', 'ECC', 'SNG', 'LAM']);
 const VARIANTS = new Set(('MAT 17:21,MAT 18:11,MAT 23:14,MRK 7:16,MRK 9:44,MRK 9:46,MRK 11:26,MRK 15:28,LUK 17:36,' +
   'LUK 23:17,JHN 5:4,ACT 8:37,ACT 15:34,ACT 24:7,ACT 28:29,ROM 16:24,3JN 1:15,REV 12:18').split(','));
 
-/** Downloads `url` once into .cache/<cacheDir>/ and returns its text, or null for a 404 when `optional` is set. */
+/**
+ * Downloads `url` once into .cache/<cacheDir>/ and returns its text, or null for a 404 when `optional` is set
+ * (remembered as an empty <file>.404, so a rebuild works offline).
+ */
 async function fetchCached(cacheDir, url, optional = false) {
   const local = join(root, '.cache', cacheDir, decodeURIComponent(url.split('/').slice(-2).join('_')));
-  try {
-    await access(local);
-  } catch {
+  const exists = (path) => access(path).then(() => true, () => false);
+  if (optional && (await exists(`${local}.404`))) return null;
+  if (!(await exists(local))) {
     const res = await fetch(url);
-    if (optional && res.status === 404) return null;
-    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
     await mkdir(dirname(local), { recursive: true });
+    if (optional && res.status === 404) {
+      await writeFile(`${local}.404`, '');
+      return null;
+    }
+    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
     await writeFile(local, Buffer.from(await res.arrayBuffer()));
   }
   return (await readFile(local, 'utf8')).replace(/^\uFEFF/, '');
 }
+
+const openBibles = async (file) =>
+  fetchCached(`open-bibles-${OPEN_BIBLES.slice(0, 7)}`, `${RAW}/seven1m/open-bibles/${OPEN_BIBLES}/${file}`);
 
 const ebible = (path, commit) => fetchCached(`ebible-${commit.slice(0, 7)}`, `${RAW}/BibleNLP/ebible/${commit}/${path}`);
 
@@ -75,6 +87,7 @@ const norm = (s) => s.normalize('NFC').replace(/\s+/g, ' ').trim();
 /** One corpus file as ref -> text, plus the refs marked <range> (text joined into the verse before). */
 function readCorpus(text) {
   const lines = text.split('\n');
+  if (lines.length !== vref.length) throw new Error(`corpus file has ${lines.length} lines, vref.txt has ${vref.length}`);
   const verses = new Map();
   const ranges = new Set();
   vref.forEach((ref, i) => {
@@ -95,10 +108,13 @@ function toEnglishVerses(original) {
   return { verses: out, ranges: new Set([...original.ranges].map((r) => toEnglish.get(r) ?? r)) };
 }
 
-/** True when `ref` is past the end of its English chapter, i.e. the translation numbers that chapter another way. */
+/**
+ * True when `ref` is past the end of its English chapter, i.e. the translation numbers that chapter another way.
+ * Only the 66 books count: deuterocanonical books are numbered differently even in English-numbered Bibles.
+ */
 function beyondEnglish(ref) {
   const [book, c, v] = parseRef(ref);
-  return Boolean(englishLength[book]) && v > (englishLength[book][c - 1] ?? 0);
+  return BOOK_CODES.includes(book) && v > (englishLength[book][c - 1] ?? 0);
 }
 
 /**
@@ -109,9 +125,15 @@ function beyondEnglish(ref) {
  */
 function fromCorpus(own, original) {
   const mapped = toEnglishVerses(original);
+  // Both snapshots hold the same translation, so a much smaller one means a truncated or broken file upstream.
+  const canonical = (m) => [...m.keys()].filter((ref) => BOOK_CODES.includes(ref.slice(0, 3))).length;
+  if (canonical(own.verses) < canonical(original.verses) * 0.98) {
+    throw new Error(`the ${EBIBLE_OWN.slice(0, 7)} corpus file has far fewer verses than the ${EBIBLE_ORIGINAL.slice(0, 7)} one`);
+  }
   if ([...own.verses.keys()].some(beyondEnglish)) return mapped;
   const verses = new Map(own.verses);
-  for (const [ref, s] of mapped.verses) if (!verses.has(ref)) verses.set(ref, s);
+  // Verses the translation joins into the one before (<range>) stay empty.
+  for (const [ref, s] of mapped.verses) if (!verses.has(ref) && !own.ranges.has(ref)) verses.set(ref, s);
   for (const [ref, s] of mapped.verses) {
     const mine = own.verses.get(ref);
     if (!mine || mine === s || !s.startsWith(mine)) continue;
@@ -146,16 +168,22 @@ async function wldehChapter(t, book, c) {
   const text = await fetchCached(`wldeh-${WLDEH.slice(0, 7)}/${version}/${folder}`, url, true);
   if (!text) return null;
   const out = new Map();
-  for (const { verse, text: s } of JSON.parse(text).data ?? []) {
-    // A footnote is sometimes glued to the end of the verse: "...be with all of you.13:14 Texts vary in ...".
-    if (!out.has(+verse)) out.set(+verse, norm(String(s)).replace(/(?<=[.!?”’»)\]])\s*\d+:\d+\s.*$/u, ''));
-  }
+  for (const { verse, text: s } of JSON.parse(text).data ?? []) if (!out.has(+verse)) out.set(+verse, norm(String(s)));
   return out;
 }
 
+/** Chapters of an open-bibles file, read once per translation, in the same shape as wldehChapter. */
+async function openBiblesChapters(file) {
+  const { books } = parseBible(await openBibles(file), { strict: true });
+  return async (book, c) => {
+    const verses = books[book]?.[c - 1];
+    return verses ? new Map(verses.flatMap((s, i) => (s ? [[i + 1, norm(s)]] : []))) : null;
+  };
+}
+
 /**
- * Text that looks like a whole verse: no cross-reference residue ("2.10 Sal. 50.14"), and ending a sentence, since
- * wldeh sometimes keeps only the first line of a poetic verse.
+ * Text that looks like a whole verse: no cross-reference or footnote residue ("2.10 Sal. 50.14", "you.13:14 Texts
+ * vary"), and ending a sentence, since wldeh sometimes keeps only the first line of a poetic verse.
  */
 const clean = (s) => Boolean(s) && !/\d[.:]\d/.test(s) && /[.!?。！？؟।”’»)\]]$/u.test(s);
 
@@ -168,12 +196,13 @@ function opening(s) {
 }
 
 /**
- * Uses wldeh/bible-api to (1) fill an empty English verse, when wldeh has the same text on both sides of it;
- * (2) split an empty verse off the one before, when wldeh's text of that verse is the start of ours (Lingala joins
- * Acts 19:41 to 19:40); and (3) split verses joined at the end of a chapter, when wldeh's chapter is longer and the
- * extra verses' openings appear in order inside our last verse (RV1909 joins Jonah 2:10-11 and Job 39:30-38).
+ * Uses another copy of the translation (`chapterOf`, from wldeh/bible-api or open-bibles) to (1) fill an empty English
+ * verse, when the copy has the same text on both sides of it; (2) split an empty verse off the one before, when the
+ * copy's text of that verse is the start of ours (Lingala joins Acts 19:41 to 19:40); and (3) split verses joined at
+ * the end of a chapter, when the copy's chapter is longer and the extra verses' openings appear in order inside our
+ * last verse (RV1909 joins Jonah 2:10-11 and Job 39:30-38).
  */
-async function supplement(t, data, missing) {
+async function supplement(chapterOf, data, missing) {
   const notes = [];
   const chapters = new Set();
   for (const ref of missing) {
@@ -183,7 +212,7 @@ async function supplement(t, data, missing) {
   }
   for (const key of chapters) {
     const [book, c] = [key.slice(0, 3), +key.slice(4)];
-    const theirs = await wldehChapter(t, book, c);
+    const theirs = await chapterOf(book, c);
     if (!theirs) continue;
     const ours = ((data.books[book] ??= [])[c - 1] ??= []);
     const same = (v) => !ours[v - 1] || theirs.get(v) === norm(ours[v - 1]);
@@ -195,7 +224,9 @@ async function supplement(t, data, missing) {
       if (clean(s) && (ours[v - 2] || ours[v]) && same(v - 1) && same(v + 1) && !ours.includes(s)) {
         ours[v - 1] = s;
         notes.push(`filled ${ref}`);
-      } else if (clean(head) && !s && norm(before).startsWith(`${head} `) && norm(before).length - head.length > 10) {
+      } else if (clean(head) && !s && !POETRY.has(book) && norm(before).startsWith(`${head} `) &&
+        // A real joined verse leaves a short tail; a long one means wldeh kept only the first line of the verse.
+        norm(before).length - head.length > 10 && norm(before).length - head.length < head.length) {
         let at = head.length;
         while (at < before.length && norm(before.slice(0, at)) !== head) at++;
         ours[v - 2] = before.slice(0, at).trim();
@@ -224,6 +255,8 @@ async function supplement(t, data, missing) {
 }
 
 async function fromUsfmRepo(t) {
+  const unknown = Object.keys(t.fixes ?? {}).filter((code) => !BOOK_CODES.includes(code));
+  if (unknown.length) throw new Error(`${t.id}: fixes for unknown book ${unknown.join(', ')}`);
   const texts = await Promise.all(
     BOOK_CODES.map(async (code, i) => {
       const file = t.pattern.replace('{num}', String(i < 39 ? i + 1 : i + 2).padStart(2, '0')).replace('{code}', code);
@@ -263,8 +296,9 @@ for (const t of catalog) {
       if (BOOK_CODES.includes(book) && v >= 1) ((data.books[book] ??= [])[c - 1] ??= [])[v - 1] = s;
     }
     let missing = gaps(english);
-    if (t.wldeh) {
-      notes.push(...(await supplement(t, data, missing)));
+    const chapterOf = t.wldeh ? (book, c) => wldehChapter(t, book, c) : t.openBibles ? await openBiblesChapters(t.openBibles) : null;
+    if (chapterOf) {
+      notes.push(...(await supplement(chapterOf, data, missing)));
       missing = missing.filter((ref) => {
         const [book, c, v] = parseRef(ref);
         return !data.books[book]?.[c - 1]?.[v - 1];
@@ -272,7 +306,7 @@ for (const t of catalog) {
     }
     if (missing.length) notes.push(`no text for ${missing.join(', ')}`);
   } else if (source === 'open-bibles') {
-    data = parseBible(await fetchCached(`open-bibles-${OPEN_BIBLES.slice(0, 7)}`, `${RAW}/seven1m/open-bibles/${OPEN_BIBLES}/${t.file}`));
+    data = parseBible(await openBibles(t.file), { strict: true });
   } else if (source === 'usfm') data = await fromUsfmRepo(t);
   else throw new Error(`${t.id}: unknown source ${source}`);
 

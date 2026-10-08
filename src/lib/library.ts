@@ -1,5 +1,6 @@
 import bookNames from '../data/book-names.json';
 import catalog from '../data/catalog.json';
+import languageBookNames from '../data/language-book-names.json';
 import type { BibleData, Translation } from './bible.ts';
 import { getImported } from './idb.ts';
 
@@ -51,13 +52,23 @@ async function fetchBuiltIn(t: Translation): Promise<BibleData> {
   }
 }
 
+/**
+ * Book names for an imported Bible: the names in its own file, and for books the file doesn't name, the usual names
+ * in its language (Kinyarwanda names as listed on bibiliya.com, Bibiliya Yera).
+ */
+function withLanguageNames(t: Translation, data: BibleData): BibleData {
+  const lang = t.langCode.toLowerCase().split(/[-_]/)[0];
+  const names = (languageBookNames as Record<string, Record<string, string>>)[lang === 'kin' ? 'rw' : lang];
+  return names ? { ...data, names: { ...names, ...data.names } } : data;
+}
+
 export function loadBible(t: Translation): Promise<BibleData> {
   let p = cache.get(t.id);
   if (!p) {
     p = t.imported
       ? getImported(t.id).then((d) => {
           if (!d) throw new Error(`${t.name} is no longer in this browser.`);
-          return d;
+          return withLanguageNames(t, d);
         })
       : fetchBuiltIn(t);
     p.catch(() => cache.delete(t.id));

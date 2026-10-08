@@ -56,6 +56,9 @@ function chapterCount(data: BibleData | undefined, code: string) {
   return data?.books[code]?.length ?? 0;
 }
 
+/** "1 chapter", "16 verses" */
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 function buildSlide(ref: VerseRef, sources: { t: Translation; data?: BibleData }[]): Slide | null {
   const parts = sources
     .filter((s): s is { t: Translation; data: BibleData } => Boolean(s.data))
@@ -90,6 +93,8 @@ export function Presenter() {
   const [dialog, setDialog] = useState<'' | 'import' | 'translations'>('');
   const refBox = useRef<HTMLInputElement>(null);
   const verseList = useRef<HTMLOListElement>(null);
+  // The selection made from the reference box, which is scrolled into view even where the page scrolls (phones).
+  const typedRef = useRef<VerseRef | null>(null);
 
   const refreshImported = useCallback(() => listImported().then(setImported).catch(() => setImported([])), []);
   useEffect(() => {
@@ -196,11 +201,18 @@ export function Presenter() {
     [primary.data, sel, select],
   );
 
-  // Keep the selected verse in view when the verse column scrolls on its own (not on phones, where the page scrolls).
+  // Keep the selected verse in view when the verse column scrolls on its own. On phones the page scrolls instead, and it
+  // only moves for a typed reference, not for a tap on a verse or for Prev / Next below the verses.
   useEffect(() => {
     const item = verseList.current?.querySelector<HTMLElement>('.is-selected');
     const panel = verseList.current?.closest<HTMLElement>('.panel');
-    if (!item || !panel || panel.scrollHeight <= panel.clientHeight) return;
+    if (!item || !panel) return;
+    const typed = typedRef.current === sel;
+    typedRef.current = null;
+    if (panel.scrollHeight <= panel.clientHeight) {
+      if (typed) item.scrollIntoView({ block: 'center' });
+      return;
+    }
     const top = item.offsetTop; // .panel is the offset parent
     if (top < panel.scrollTop + 40) panel.scrollTop = top - 40;
     else if (top + item.offsetHeight > panel.scrollTop + panel.clientHeight - 40) panel.scrollTop = top + item.offsetHeight - panel.clientHeight + 40;
@@ -231,19 +243,26 @@ export function Presenter() {
       setRefError('Try a reference like John 3:16, Ps 23 or Rom 8:28-30.');
       return;
     }
+    // A chapter or verse past the end is reported, not swapped for the last one, which in live mode would go on screen.
+    const name = bookName(ref.book, primary.data);
     const chapters = chapterCount(primary.data, ref.book);
     if (primary.data && (ref.chapter < 1 || ref.chapter > chapters)) {
-      setRefError(`${bookName(ref.book, primary.data)} has ${chapters} chapters.`);
+      setRefError(chapters ? `${name} has ${plural(chapters, 'chapter')}.` : `${name} is not in ${primaryT.abbr}.`);
       return;
     }
     const verses = primary.data?.books[ref.book]?.[ref.chapter - 1]?.length ?? ref.verseEnd;
-    const clamped = { ...ref, verse: Math.min(ref.verse, verses), verseEnd: Math.min(ref.verseEnd, verses) };
+    if (primary.data && (ref.verse < 1 || ref.verse > verses)) {
+      setRefError(`${name} ${ref.chapter} has ${plural(verses, 'verse')}.`);
+      return;
+    }
+    const target = { ...ref, verseEnd: Math.min(ref.verseEnd, verses) }; // a range may run to the end of the chapter
     setRefError('');
-    select(clamped);
+    typedRef.current = target;
+    select(target);
     setPicking('chapter');
     setTab('browse');
     refBox.current?.blur();
-    verseList.current?.focus();
+    verseList.current?.focus({ preventScroll: true });
   };
 
   const results = useMemo(() => {

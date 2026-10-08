@@ -1,7 +1,7 @@
 [
   {"id": "engwebp", "file": "eng-engwebp", "wldeh": "en-web", "abbr": "WEB", "name": "World English Bible", "language": "English", "langCode": "en", "license": "Public Domain"},
   {"id": "kjv", "file": "eng-kjv.osis.xml", "abbr": "KJV", "name": "King James Version", "language": "English", "langCode": "en", "license": "Public Domain", "source": "open-bibles"},
-  {"id": "bsb", "file": "eng-engbsb", "wldeh": "en-bsb", "abbr": "BSB", "name": "Berean Standard Bible", "language": "English", "langCode": "en", "license": "Public Domain"},
+  {"id": "bsb", "file": "eng-engbsb", "openBibles": "eng-bsb.usfx.xml", "abbr": "BSB", "name": "Berean Standard Bible", "language": "English", "langCode": "en", "license": "Public Domain"},
   {"id": "swhonen", "file": "swh-swhonen", "wldeh": "swh-onen", "abbr": "NENO", "name": "Biblica® Toleo Wazi Neno: Bibilia Takatifu", "language": "Kiswahili", "langCode": "sw", "license": "CC BY-SA 4.0 (Biblica)"},
   {"id": "yor", "file": "yor-yor", "wldeh": "yo-oycb", "abbr": "YCB", "name": "Bíbélì Mímọ́ ní Èdè Yorùbá Òde-Òní", "language": "Yorùbá", "langCode": "yo", "license": "CC BY-SA 4.0 (Biblica)"},
   {"id": "ibo", "file": "ibo-ibo", "wldeh": "ig-biuo", "abbr": "ICB", "name": "Baịbụlụ Nsọ nʼIgbo Ndị Ugbu a", "language": "Igbo", "langCode": "ig", "license": "CC BY-SA 4.0 (Biblica)"},

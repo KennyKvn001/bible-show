@@ -12,23 +12,21 @@ const EXTENSIONS = /(\.(xml|json|osis|usfx|zefania|usfm|sfm|txt))+$/i;
 const count = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
 /**
- * Reads a file as text: UTF-8, or UTF-16 with a byte order mark. Older USFM files are often Windows-1252, which their
- * \ide line may say ("\ide CP-1252"); other files that are not valid UTF-8 are read as Windows-1252 too.
+ * Reads a file as text: UTF-16 or UTF-8 with a byte order mark, else UTF-8 if it is valid UTF-8, else Windows-1252,
+ * which older USFM files often are. A USFM \ide line naming an encoding is not trusted: files converted to UTF-8 often
+ * keep a stale "\ide CP-1252".
  */
 async function readText(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
-  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes);
-  const latin = new TextDecoder('windows-1252');
-  const ide = /\\ide\s+([^\r\n]*)/.exec(latin.decode(bytes.subarray(0, 4000)))?.[1] ?? '';
-  if (!/1252|latin.?1|8859.?1\b/i.test(ide)) {
-    try {
-      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch {
-      // not UTF-8: fall back to Windows-1252
-    }
+  const decode = (encoding: string, fatal = false) => new TextDecoder(encoding, { fatal }).decode(bytes).replace(/^\uFEFF/, '');
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return decode('utf-16le');
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return decode('utf-16be');
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return decode('utf-8');
+  try {
+    return decode('utf-8', true);
+  } catch {
+    return decode('windows-1252'); // not UTF-8
   }
-  return latin.decode(bytes);
 }
 
 /** The description after the book code on a USFM \id line: "Bibiliya Yera" in "\id GEN - Bibiliya Yera". */
@@ -43,18 +41,18 @@ function skipReason(message: string): string {
 
 /**
  * A short name from the full name, at most 6 characters: the initials of several words, keeping abbreviations and
- * numbers whole ("King James Version" gives "KJV", "Test LSG" gives "TLSG"), or else the first word.
+ * numbers whole ("King James Version" gives "KJV", "Test LSG" gives "TLSG"), or else the start of the first word (one
+ * word, or a first word too long to keep whole: "LSG1910 Test" gives "LSG191").
  */
 function abbreviate(name: string): string {
   const words = name.match(/[\p{L}\p{N}]+/gu) ?? [];
-  if (words.length < 2) return (words[0] ?? '').slice(0, 6).toUpperCase();
   let out = '';
-  for (const w of words) {
+  for (const w of words.length > 1 ? words : []) {
     const part = /^[\p{Lu}\p{N}]+$/u.test(w) ? w : Array.from(w)[0];
     if (out.length + part.length > 6) break;
     out += part;
   }
-  return out.toUpperCase();
+  return (out || (words[0] ?? '').slice(0, 6)).toUpperCase();
 }
 
 interface Props {
